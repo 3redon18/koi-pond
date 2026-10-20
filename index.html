@@ -774,11 +774,16 @@ select option { background: #0a2223; color: var(--ink); }
 
   // ---------------- curious koi (desktop mouse) ----------------
   // Rest the cursor over the water and nearby koi come to look; whip it across and they scatter.
-  const cursor = { on: false, x: 0, y: 0, still: 0, speed: 0, lastT: 0, scareCool: 0 };
+  const cursor = { on: false, x: 0, y: 0, still: 0, speed: 0, lastT: 0, scareCool: 0, onPad: false };
   function updateCursor(dt) {
     if (!cursor.on) return;
     cursor.speed *= Math.max(0, 1 - dt * 8);
     cursor.still = cursor.speed < 6 ? cursor.still + dt : 0;
+    // a cursor resting on a lily pad isn't over open water, so the koi ignore it
+    cursor.onPad = pads.some((p) => {
+      const dx = cursor.x - p.x, dy = (cursor.y - p.y) / 0.85;
+      return dx * dx + dy * dy <= (p.r + 1.5) * (p.r + 1.5);
+    });
     if (cursor.scareCool > 0) cursor.scareCool -= dt;
   }
   function onCursorMove(x, y) {
@@ -1116,7 +1121,7 @@ select option { background: #0a2223; color: var(--ink); }
       }
     } else if (k.bored > 0) {
       k.bored -= dt;
-    } else if (cursor.on && cursor.still > 0.6 && !dragging) {
+    } else if (cursor.on && cursor.still > 0.6 && !dragging && !cursor.onPad) {
       // curious: swim over to look at a resting cursor, slowing as they arrive,
       // then lose interest after a while and wander off
       const d = Math.hypot(cursor.x - hx, cursor.y - hy), reach = 20 + Math.min(W, H) * (0.2 + 0.45 * k.curious);
