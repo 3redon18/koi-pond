@@ -233,6 +233,7 @@ select {
 select option { background: #0a2223; color: var(--ink); }
 .choices { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .choices.three { grid-template-columns: repeat(3, 1fr); }
+.choices.two { grid-template-columns: repeat(2, 1fr); }
 .choice {
   font: inherit;
   font-size: 11px;
@@ -368,6 +369,16 @@ select option { background: #0a2223; color: var(--ink); }
     <div class="choices three" id="pads" role="group" aria-labelledby="padsLabel"></div>
   </div>
 
+  <div class="field">
+    <span class="label" id="weatherLabel">weather <output id="weatherNow"></output></span>
+    <div class="choices three" id="weather" role="group" aria-labelledby="weatherLabel"></div>
+  </div>
+
+  <div class="field">
+    <span class="label" id="visitorsLabel">frog and dragonfly</span>
+    <div class="choices two" id="visitors" role="group" aria-labelledby="visitorsLabel"></div>
+  </div>
+
   <p class="keys">keys: f or space = food<br>s = settings<br>enter = full screen</p>
   </div>
 </section>
@@ -409,7 +420,8 @@ select option { background: #0a2223; color: var(--ink); }
   const PAD_MODES = ["none", "a few", "lots"];
 
   // ---------------- settings (remembered in this browser only) ----------------
-  const DEFAULTS = { count: 7, colors: "mixed", speed: 5, water: 0, pads: 1, custom: CUSTOM_DEFAULT.slice() };
+  const WEATHERS = [["clear", "clear"], ["rain", "rain"], ["blossoms", "blossoms"], ["leaves", "leaves"], ["snow", "snow"], ["season", "by season"]];
+  const DEFAULTS = { count: 7, colors: "mixed", speed: 5, water: 0, pads: 1, custom: CUSTOM_DEFAULT.slice(), weather: "season", visitors: 1 };
   let prefs = { ...DEFAULTS, custom: CUSTOM_DEFAULT.slice() };
   try {
     const saved = JSON.parse(localStorage.getItem("koi-pond-settings") || "null");
@@ -569,6 +581,7 @@ select option { background: #0a2223; color: var(--ink); }
     buildPads();
     pellets = [];
     ripples = [];
+    resetVisitors();
   }
 
   function layout() {
@@ -615,6 +628,287 @@ select option { background: #0a2223; color: var(--ink); }
     addRipple(x, y, 1, 1.2, 120);
     for (let i = 0; i < 5 && pellets.length < 40; i++)
       pellets.push({ x: clamp(x + rand(-4, 4), 1, W - 2), y: clamp(y + rand(-4, 4), 1, H - 2), age: 0 });
+  }
+
+  // ---------------- weather ----------------
+  // Things fall toward the water (h = height above it), then float on the surface for a while.
+  let drift = [], spawnAcc = 0;
+  const PETAL = [0xF4B6C8, 0xF9D3DE, 0xE995AE];
+  const LEAF = [0xD9822B, 0xC4472D, 0xE6B13A, 0x9C5A2B];
+  const SEASON_OF_MONTH = ["snow", "snow", "blossoms", "blossoms", "blossoms", "clear", "clear", "clear", "leaves", "leaves", "leaves", "snow"];
+  function currentWeather() {
+    return prefs.weather === "season" ? SEASON_OF_MONTH[new Date().getMonth()] : prefs.weather;
+  }
+  const areaK = () => Math.max(1, (W * H) / (120 * 160));
+  const windX = () => 2.5 + Math.sin(t * 0.05) * 3;
+
+  function spawnDrift(kind) {
+    const d = { kind, x: rand(-12, W + 4), y: rand(-4, H), age: 0, life: rand(35, 60), flip: Math.random() < 0.5 };
+    if (kind === "snow") { d.h = rand(18, 34); d.vh = rand(9, 14); d.col = 0xF4F8FF; d.big = Math.random() < 0.3; d.life = rand(2, 3.5); }
+    else if (kind === "leaves") { d.h = rand(22, 40); d.vh = rand(5, 8); d.col = LEAF[(Math.random() * LEAF.length) | 0]; }
+    else { d.h = rand(20, 36); d.vh = rand(6, 9); d.col = PETAL[(Math.random() * PETAL.length) | 0]; }
+    drift.push(d);
+  }
+
+  function updateWeather(dt) {
+    const w = currentWeather();
+    const rate = { rain: 9, blossoms: 0.7, leaves: 0.4, snow: 3.5 }[w] || 0;
+    spawnAcc += rate * areaK() * dt;
+    while (spawnAcc >= 1) {
+      spawnAcc -= 1;
+      if (w === "rain") {
+        const x = rand(0, W), y = rand(0, H);
+        addRipple(x, y, 0.4, 0.7, 95);
+        splashes.push({ x, y, life: 0.12 });
+      } else if (drift.length < 140) spawnDrift(w);
+    }
+    for (let i = splashes.length - 1; i >= 0; i--) if ((splashes[i].life -= dt) <= 0) splashes.splice(i, 1);
+    const wx = windX();
+    for (let i = drift.length - 1; i >= 0; i--) {
+      const d = drift[i];
+      if (d.h > 0) {
+        // falling: flutter sideways with the breeze
+        d.h -= d.vh * dt;
+        d.x += (wx + Math.sin(t * 3 + d.y) * (d.kind === "snow" ? 1.5 : 4)) * dt;
+        if (Math.random() < dt * 3) d.flip = !d.flip;
+        if (d.h <= 0) {
+          d.h = 0;
+          if (d.kind !== "snow") addRipple(d.x, d.y, 0.5, 0.8, 70);
+        }
+        continue;
+      }
+      // floating: carried by a slow current, nudged aside by passing koi
+      d.age += dt;
+      d.x += (Math.sin(t * 0.2 + d.y * 0.05) * 0.6 + wx * 0.08) * dt;
+      d.y += Math.cos(t * 0.17 + d.x * 0.04) * 0.4 * dt;
+      for (const k of koi) {
+        const dx = d.x - k.x[0], dy = d.y - k.y[0], dd = Math.hypot(dx, dy);
+        if (dd < 4 && dd > 0.01) { d.x += (dx / dd) * 7 * dt; d.y += (dy / dd) * 7 * dt; }
+      }
+      if (d.age > d.life || d.x > W + 6 || d.x < -6 || d.y < -6 || d.y > H + 6) drift.splice(i, 1);
+    }
+  }
+
+  function drawDriftItem(d, x, y, a, night) {
+    const c = night ? mix(d.col, 0x0C1630, d.kind === "snow" ? 60 : 110) : d.col;
+    if (d.kind === "snow") {
+      blend(x, y, c, a);
+      if (d.big) { blend(x + 1, y, c, a * 0.6); blend(x, y + 1, c, a * 0.6); }
+    } else if (d.kind === "leaves") {
+      const dark = mix(c, 0x000000, 70);
+      if (d.flip) { blend(x, y, c, a); blend(x + 1, y, c, a); blend(x + 2, y, dark, a); blend(x, y + 1, c, a); blend(x + 1, y + 1, c, a); }
+      else { blend(x, y, c, a); blend(x, y + 1, c, a); blend(x, y + 2, dark, a); blend(x + 1, y, c, a); blend(x + 1, y + 1, c, a); }
+    } else {
+      blend(x, y, c, a);
+      blend(x + (d.flip ? 1 : 0), y + (d.flip ? 0 : 1), c, a);
+      blend(x + 1, y + 1, mix(c, 0xFFFFFF, 90), a * 0.8);
+    }
+  }
+
+  function drawFloating(night) {
+    for (const d of drift) {
+      if (d.h > 0) continue;
+      const fade = d.kind === "snow" ? 1 - d.age / d.life : Math.min(1, (d.life - d.age) / 3);
+      if (fade <= 0) continue;
+      drawDriftItem(d, Math.floor(d.x), Math.floor(d.y), 230 * fade, night);
+    }
+  }
+
+  function drawFalling(night) {
+    for (const d of drift) {
+      if (d.h <= 0) continue;
+      // shadow on the water, offset by height
+      blend(d.x + 2 + d.h * 0.12, d.y + 3 + d.h * 0.16, 0x000000, 45);
+      drawDriftItem(d, Math.floor(d.x), Math.floor(d.y), 255, night);
+    }
+  }
+
+  // ---------------- visitors: frog, dragonfly, koi gulps ----------------
+  let splashes = [];
+  const frog = { state: 0, timer: rand(8, 15), pad: null, x: 0, y: 0, sx: 0, sy: 0, ex: 0, ey: 0, f: 0, blink: 0, croak: 0, up: true };
+  const fly = { state: 0, timer: rand(5, 12), x: 0, y: 0, tx: 0, ty: 0, ang: 0, hover: 0, legs: 0 };
+  let gulpTimer = rand(8, 18), gulps = [];
+
+  function resetVisitors() {
+    frog.state = 0; frog.timer = rand(8, 15);
+    fly.state = 0; fly.timer = rand(5, 12);
+    drift = []; splashes = []; gulps = [];
+  }
+
+  function frogHopOff() {
+    frog.state = 4; frog.f = 0;
+    frog.sx = frog.x; frog.sy = frog.y;
+    const a = rand(0, Math.PI * 2), r = frog.pad.r + rand(6, 10);
+    frog.ex = clamp(frog.pad.x + Math.cos(a) * r, 3, W - 3);
+    frog.ey = clamp(frog.pad.y + Math.sin(a) * r, 3, H - 3);
+  }
+
+  function updateFrog(dt) {
+    if (!prefs.visitors || !pads.length) { frog.state = 0; return; }
+    switch (frog.state) {
+      case 0: // away
+        if ((frog.timer -= dt) <= 0) {
+          frog.pad = pads[(Math.random() * pads.length) | 0];
+          const a = rand(0, Math.PI * 2), r = frog.pad.r + 6;
+          frog.x = clamp(frog.pad.x + Math.cos(a) * r, 3, W - 3);
+          frog.y = clamp(frog.pad.y + Math.sin(a) * r, 3, H - 3);
+          frog.up = Math.random() < 0.5;
+          frog.state = 1; frog.timer = 2.2;
+          addRipple(frog.x, frog.y, 1, 1.2, 110);
+        }
+        break;
+      case 1: // just its eyes above the water
+        if ((frog.timer -= dt) <= 0) {
+          frog.state = 2; frog.f = 0;
+          frog.sx = frog.x; frog.sy = frog.y;
+          frog.ex = frog.pad.x + rand(-1.5, 1.5); frog.ey = frog.pad.y + rand(-1, 1);
+          addRipple(frog.x, frog.y, 1, 1, 120);
+        }
+        break;
+      case 2: // hop up onto the pad
+      case 4: // hop off into the water
+        frog.f += dt / 0.45;
+        frog.x = frog.sx + (frog.ex - frog.sx) * Math.min(1, frog.f);
+        frog.y = frog.sy + (frog.ey - frog.sy) * Math.min(1, frog.f);
+        if (frog.f >= 1) {
+          if (frog.state === 2) { frog.state = 3; frog.timer = rand(14, 28); }
+          else {
+            addRipple(frog.x, frog.y, 1, 1.6, 170);
+            addRipple(frog.x, frog.y, -2, 1.8, 100);
+            frog.state = 0; frog.timer = rand(45, 90);
+          }
+        }
+        break;
+      case 3: // sitting
+        frog.blink = frog.blink > 0 ? frog.blink - dt : (Math.random() < dt * 0.4 ? 0.18 : 0);
+        if (frog.croak > 0) frog.croak -= dt;
+        else if (Math.random() < dt * 0.06) frog.croak = 0.9;
+        if ((frog.timer -= dt) <= 0) frogHopOff();
+        break;
+    }
+  }
+
+  function drawFrog(night) {
+    if (frog.state === 0) return;
+    const G = night ? 0x4F7A34 : 0x9ACD5A, D = night ? 0x2F4F22 : 0x557F2E, L = night ? 0x41662C : 0x79A844;
+    const EYE = 0x15140F, RIM = night ? 0x7F9A5A : 0xB9D27A;
+    if (frog.state === 1) {
+      const x = Math.floor(frog.x), y = Math.floor(frog.y);
+      blend(x - 1, y, RIM, 230); blend(x + 1, y, RIM, 230);
+      blend(x - 1, y, EYE, 160); blend(x + 1, y, EYE, 160);
+      return;
+    }
+    let lift = 0;
+    if (frog.state === 2 || frog.state === 4) lift = Math.sin(Math.min(1, frog.f) * Math.PI) * 5;
+    const cx = Math.floor(frog.x), cy = Math.floor(frog.y);
+    // shadow
+    fillCircle(cx + 1.5 + lift * 0.3, cy + 2 + lift * 0.5, 2.6, 0x000000, 60);
+    const rows = ["..e.e..", ".GGGGG.", "lGGdGGl", ".GdGGG.", ".GGGdG.", "LL...LL"];
+    const oy = cy - 3 - Math.round(lift);
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[frog.up ? r : rows.length - 1 - r];
+      for (let c = 0; c < 7; c++) {
+        const ch = row[c];
+        if (ch === ".") continue;
+        let col = ch === "G" ? G : ch === "d" ? D : L;
+        if (ch === "e") col = frog.blink > 0 ? G : EYE;
+        blend(cx - 3 + c, oy + r, col, 255);
+      }
+    }
+    if (frog.state === 3 && frog.croak > 0) {
+      // throat balloon puffs out at the front
+      const s = Math.sin((1 - frog.croak / 0.9) * Math.PI);
+      const fy = frog.up ? oy - 1 : oy + rows.length;
+      fillCircle(cx + 0.5, fy + 0.5, 1 + s * 1.4, night ? 0xA8A880 : 0xEDE7B8, 230);
+    }
+  }
+
+  function updateFly(dt) {
+    if (!prefs.visitors || currentWeather() === "snow") { if (fly.state) fly.state = 0; return; }
+    if (fly.state === 0) {
+      if ((fly.timer -= dt) <= 0) {
+        const fromLeft = Math.random() < 0.5;
+        fly.x = fromLeft ? -6 : W + 6; fly.y = rand(H * 0.15, H * 0.85);
+        fly.legs = 4 + ((Math.random() * 4) | 0);
+        fly.state = 1; fly.hover = 0;
+        fly.tx = rand(W * 0.15, W * 0.85); fly.ty = rand(H * 0.15, H * 0.85);
+      }
+      return;
+    }
+    if (fly.hover > 0) {
+      fly.hover -= dt;
+      fly.x += Math.sin(t * 13) * 0.08; fly.y += Math.cos(t * 11) * 0.08;
+      return;
+    }
+    const dx = fly.tx - fly.x, dy = fly.ty - fly.y, d = Math.hypot(dx, dy);
+    const sp = 45 * dt;
+    fly.ang = Math.atan2(dy, dx);
+    if (d <= sp) {
+      fly.x = fly.tx; fly.y = fly.ty;
+      fly.legs--;
+      if (fly.state === 2 || fly.legs <= 0) {
+        if (fly.state === 2) { fly.state = 0; fly.timer = rand(30, 70); return; }
+        fly.state = 2; // leave
+        fly.tx = Math.random() < 0.5 ? -10 : W + 10; fly.ty = rand(0, H);
+        return;
+      }
+      fly.hover = rand(0.5, 2.2);
+      if (Math.random() < 0.35) addRipple(fly.x, fly.y + 1, 0.4, 0.9, 120); // touches the water
+      fly.tx = clamp(fly.x + rand(-W * 0.4, W * 0.4), 6, W - 6);
+      fly.ty = clamp(fly.y + rand(-H * 0.4, H * 0.4), 6, H - 6);
+    } else {
+      fly.x += (dx / d) * sp; fly.y += (dy / d) * sp;
+    }
+  }
+
+  function drawFly(night) {
+    if (fly.state === 0) return;
+    const ca = Math.cos(fly.ang), sa = Math.sin(fly.ang);
+    const body = night ? 0x2A5F70 : 0x2E9FB8, head = night ? 0x3D7F8A : 0x5FD0C8;
+    // shadow on the water
+    for (let i = -2; i <= 2; i++) blend(fly.x + 4 + ca * i, fly.y + 6 + sa * i, 0x000000, 35);
+    // wings: two pairs across the body, shimmering
+    const wa = 90 + 60 * Math.abs(Math.sin(t * 40));
+    for (const off of [0.6, -0.6]) {
+      const wx = fly.x + ca * off, wy = fly.y + sa * off;
+      for (let i = 1; i <= 3; i++) {
+        blend(wx - sa * i, wy + ca * i, 0xDDF2F5, wa);
+        blend(wx + sa * i, wy - ca * i, 0xDDF2F5, wa);
+      }
+    }
+    for (let i = -3; i <= 1; i++) blend(fly.x + ca * i, fly.y + sa * i, body, 255);
+    blend(fly.x + ca * 2, fly.y + sa * 2, head, 255);
+  }
+
+  function updateGulps(dt) {
+    if (!prefs.visitors) return;
+    if ((gulpTimer -= dt) <= 0 && koi.length) {
+      gulpTimer = rand(8, 20);
+      const k = koi[(Math.random() * koi.length) | 0];
+      if (k.fear <= 0) gulps.push({ k, n: 0, timer: 0 });
+    }
+    for (let i = gulps.length - 1; i >= 0; i--) {
+      const g = gulps[i];
+      if ((g.timer -= dt) > 0) continue;
+      addRipple(g.k.x[0] + Math.cos(g.k.ang) * 1.5, g.k.y[0] + Math.sin(g.k.ang) * 1.5, 0.5, 1.0, 150);
+      g.timer = 0.35;
+      if (++g.n >= 2) gulps.splice(i, 1);
+    }
+  }
+
+  /** Tap on a visitor? Returns true if it was handled. */
+  function tapVisitor(x, y) {
+    if (fly.state && Math.hypot(x - fly.x, y - fly.y) < 6) {
+      fly.state = 2; fly.hover = 0;
+      fly.tx = fly.x < W / 2 ? -10 : W + 10; fly.ty = clamp(fly.y + rand(-20, 20), 0, H);
+      return true;
+    }
+    if (frog.state === 3 && Math.hypot(x - frog.x, y - frog.y) < 6) {
+      frog.croak = 0.9;
+      frog.timer = 1.1; // croaks, then hops off
+      return true;
+    }
+    return false;
   }
 
   function updateKoi(k, dt, speedMul) {
@@ -730,6 +1024,10 @@ select option { background: #0a2223; color: var(--ink); }
     }
     const speedMul = 0.35 + prefs.speed * 0.13; // 5 = normal pace
     for (const k of koi) updateKoi(k, dt, speedMul);
+    updateWeather(dt);
+    updateFrog(dt);
+    updateFly(dt);
+    updateGulps(dt);
   }
 
   // ---------------- drawing ----------------
@@ -859,10 +1157,14 @@ select option { background: #0a2223; color: var(--ink); }
 
   function render() {
     const night = prefs.water === NIGHT;
+    const wthr = currentWeather();
     drawWater();
+    if (wthr === "rain") for (let i = 0; i < W * H; i++) px[i] = mix(px[i], 0x0A1A22, 45);
+    if (wthr === "snow") for (let i = 0; i < W * H; i++) px[i] = mix(px[i], 0xA8B8C8, 22);
     if (night) drawNightSky();
     for (const k of koi) drawKoi(k, true);
     for (const k of koi) drawKoi(k, false);
+    drawFloating(night);
     const pc = night ? mix(PELLET, 0x0A1226, 90) : PELLET;
     pellets.forEach((p) => {
       const a = p.age > 40 ? (255 * (45 - p.age)) / 5 : 255;
@@ -875,8 +1177,13 @@ select option { background: #0a2223; color: var(--ink); }
       const f = 1 - r.life / r.max;
       if (r.r > 0) ring(r.x, r.y, r.r, rc, r.alpha * f * f * (night ? 0.8 : 1));
     }
+    if (frog.state === 1) drawFrog(night); // eyes peeking out of the water, under the pads
     for (const p of pads) drawPad(p, true);
     for (const p of pads) drawPad(p, false);
+    if (frog.state > 1) drawFrog(night);
+    for (const s of splashes) blend(s.x, s.y, 0xD8ECF0, 200);
+    drawFalling(night);
+    drawFly(night);
     if (night) {
       for (const f of flies) {
         const glow = 0.5 + 0.5 * Math.sin(t * 1.7 + f[2] * 3);
@@ -1128,6 +1435,25 @@ select option { background: #0a2223; color: var(--ink); }
     b.addEventListener("click", () => { prefs.water = i; savePrefs(); refreshControls(); });
     waterGroup.append(b);
   });
+  const weatherGroup = document.getElementById("weather"), weatherNow = document.getElementById("weatherNow");
+  const visitorsGroup = document.getElementById("visitors");
+  WEATHERS.forEach(([key, name]) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.type = "button";
+    b.textContent = name;
+    b.dataset.key = key;
+    b.addEventListener("click", () => { prefs.weather = key; drift = []; savePrefs(); refreshControls(); });
+    weatherGroup.append(b);
+  });
+  ["off", "on"].forEach((name, i) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.type = "button";
+    b.textContent = name;
+    b.addEventListener("click", () => { prefs.visitors = i; savePrefs(); refreshControls(); });
+    visitorsGroup.append(b);
+  });
   PAD_MODES.forEach((name, i) => {
     const b = document.createElement("button");
     b.className = "choice";
@@ -1143,6 +1469,9 @@ select option { background: #0a2223; color: var(--ink); }
     colors.value = String(prefs.colors);
     [...waterGroup.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === prefs.water)));
     [...padsGroup.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === prefs.pads)));
+    [...weatherGroup.children].forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.key === prefs.weather)));
+    [...visitorsGroup.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === (prefs.visitors ? 1 : 0))));
+    weatherNow.textContent = prefs.weather === "season" ? "now: " + currentWeather() : "";
     renderPreview();
   }
   count.addEventListener("input", () => { prefs.count = +count.value; countOut.textContent = count.value; syncKoi(); savePrefs(); });
@@ -1170,6 +1499,9 @@ select option { background: #0a2223; color: var(--ink); }
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
     const x = e.clientX / scale, y = e.clientY / scale;
     lastRippleX = x; lastRippleY = y;
+    if (tapVisitor(x, y)) return;
+    // a splash near the frog sends it back into the water
+    if (!food && frog.state === 3 && Math.hypot(x - frog.x, y - frog.y) < 22) frogHopOff();
     if (food) dropFood(x, y);
     else {
       addRipple(x, y, 1, 1.8, 170);

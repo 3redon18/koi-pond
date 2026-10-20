@@ -3,7 +3,10 @@
 A small pixel-art koi pond for the browser. Tap the water to make ripples and startle the fish, or turn on food and tap to feed them.
 
 - **Food:** the button bottom-right (or press F / Space)
-- **Settings:** the button top-right (or press S): number of koi, koi colors, paint your own koi, swim speed, water (teal, night, deep blue, jade) and lily pads
+- **Full screen:** the button top-left (or press Enter)
+- **Settings:** the button top-right (or press S): number of koi, koi colors, paint your own koi, swim speed, water (teal, night, deep blue, jade), lily pads, weather (rain, blossoms, leaves, snow, or by season) and the frog and dragonfly
+
+Now and then a frog climbs onto a lily pad and a dragonfly skims across. Click either one and see what happens.
 
 Settings are remembered in your browser. Everything is one file, `index.html`, with no build step.
 
