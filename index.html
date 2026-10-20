@@ -1,0 +1,1185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A pixel koi pond. Tap the water to make ripples, or turn on food to feed the koi.">
+<meta name="theme-color" content="#0f3a3a">
+<style>[hidden]{display:none!important}</style>
+<title>Koi Pond</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap">
+<style>
+/* Layout: the whole window is the pond. Two round controls float at the corners and fade when idle;
+   settings open as a small panel over the water. One deliberate dark look: it's a pond. */
+:root {
+  --water: #0f3a3a;
+  --ink: #f3efe6;
+  --muted: #a9c4bb;
+  --panel: rgba(5, 20, 21, 0.9);
+  --line: rgba(191, 227, 214, 0.22);
+  --accent: #f2d58a;
+  --pixel: "Silkscreen", ui-monospace, "Courier New", monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--water);
+  color: var(--ink);
+  font-family: var(--pixel);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+#pond {
+  position: fixed;
+  left: 0;
+  top: 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  touch-action: none;
+  cursor: pointer;
+}
+
+/* ---- floating controls ---- */
+.ctl {
+  position: fixed;
+  z-index: 2;
+  transition: opacity 0.7s ease;
+}
+#settingsBtn {
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+}
+#foodBtn {
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+}
+body.idle .ctl { opacity: 0; pointer-events: none; }
+.round {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0;
+}
+.round svg { width: 28px; height: 28px; shape-rendering: crispEdges; }
+#foodBtn[aria-pressed="true"] { border-color: var(--accent); }
+#foodBtn .off-mark { display: block; }
+#foodBtn[aria-pressed="true"] .off-mark { display: none; }
+#foodBtn .crumbs { display: none; }
+#foodBtn[aria-pressed="true"] .crumbs { display: block; }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---- toast & first-visit hint ---- */
+#toast, #hint {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+  text-align: center;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.6);
+  transition: opacity 0.6s ease;
+  white-space: nowrap;
+}
+#toast {
+  top: calc(20px + env(safe-area-inset-top, 0px));
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  opacity: 0;
+}
+#toast.show { opacity: 1; transition: none; }
+#hint {
+  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  font-size: 13px;
+  line-height: 1.7;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+#hint.gone { opacity: 0; }
+
+/* ---- settings panel ---- */
+#panel {
+  position: fixed;
+  z-index: 3;
+  top: calc(76px + env(safe-area-inset-top, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  width: min(300px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  max-height: calc(100% - 100px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 16px 18px 18px;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 16px;
+  backdrop-filter: blur(2px);
+}
+#panel[hidden] { display: none; }
+.view { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.view > * { min-width: 0; }
+.view[hidden] { display: none; }
+
+/* paint my koi */
+.paintbtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.paintbtn span:nth-of-type(1) { flex: 1; }
+#paintPreview { width: 60px; height: 18px; image-rendering: pixelated; flex: none; }
+#painterCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.partnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#partName { font-size: 14px; letter-spacing: 0.1em; }
+.swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.swatches button {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  padding: 0;
+  cursor: pointer;
+}
+.swatches button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(242, 213, 138, 0.35); }
+.painter-actions { display: flex; justify-content: space-between; gap: 8px; }
+.textbtn.primary { color: var(--ink); border-color: var(--accent); }
+#panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+#panel h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+}
+.textbtn {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.field { display: grid; gap: 8px; }
+.field > label, .field > .label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.field output { color: var(--ink); font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+}
+select option { background: #0a2223; color: var(--ink); }
+.choices { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.choices.three { grid-template-columns: repeat(3, 1fr); }
+.choice {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  padding: 8px 2px;
+  cursor: pointer;
+}
+.choice[aria-pressed="true"] { border-color: var(--accent); }
+.swatch {
+  height: 30px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.keys {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.8;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ctl, #toast, #hint { transition: none; }
+}
+</style>
+</head>
+<body>
+<canvas id="pond" aria-label="A koi pond. Tap the water to make ripples, or turn on food to feed the koi."></canvas>
+
+<button class="ctl round" id="settingsBtn" aria-label="Pond settings" aria-expanded="false" aria-controls="panel">
+  <svg viewBox="0 0 14 14" aria-hidden="true">
+    <rect x="2" y="3" width="10" height="1" fill="currentColor"/><rect x="8" y="2" width="2" height="3" fill="currentColor"/>
+    <rect x="2" y="7" width="10" height="1" fill="currentColor"/><rect x="4" y="6" width="2" height="3" fill="currentColor"/>
+    <rect x="2" y="11" width="10" height="1" fill="currentColor"/><rect x="9" y="10" width="2" height="3" fill="currentColor"/>
+  </svg>
+</button>
+
+<button class="ctl round" id="foodBtn" aria-label="Food" aria-pressed="false">
+  <svg viewBox="0 0 14 14" aria-hidden="true">
+    <g class="crumbs" fill="#ebc07e"><rect x="3" y="1" width="1" height="1"/><rect x="7" y="0" width="1" height="1"/><rect x="10" y="2" width="1" height="1"/></g>
+    <rect x="5" y="4" width="4" height="1" fill="#a8733f"/>
+    <rect x="6" y="5" width="2" height="1" fill="#6e4a28"/>
+    <rect x="4" y="6" width="6" height="1" fill="#a8733f"/>
+    <rect x="3" y="7" width="8" height="4" fill="#a8733f"/>
+    <rect x="4" y="11" width="6" height="1" fill="#a8733f"/>
+    <rect x="4" y="8" width="2" height="2" fill="#c08a52"/>
+    <g class="off-mark" fill="#e8e2d6"><rect x="2" y="12" width="1" height="1"/><rect x="3" y="11" width="1" height="1"/><rect x="10" y="3" width="1" height="1"/><rect x="11" y="2" width="1" height="1"/></g>
+  </svg>
+</button>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="hint">tap the water<br>turn on food to feed the koi</div>
+
+<section id="panel" role="dialog" aria-label="Pond settings" hidden>
+  <header>
+    <h2 id="panelTitle">pond</h2>
+    <button class="textbtn" id="closeBtn">close</button>
+  </header>
+
+  <div class="view" id="paintView" hidden>
+    <canvas id="painterCanvas" width="72" height="30" aria-label="Your koi. Tap a part of the fish to choose it."></canvas>
+    <div class="partnav">
+      <button class="textbtn" id="partPrev" aria-label="Previous part">&lt;</button>
+      <span id="partName" aria-live="polite">head</span>
+      <button class="textbtn" id="partNext" aria-label="Next part">&gt;</button>
+    </div>
+    <div class="swatches" id="swatches" role="group" aria-label="Color for this part"></div>
+    <div class="painter-actions">
+      <button class="textbtn" id="paintReset">start over</button>
+      <button class="textbtn primary" id="paintDone">done</button>
+    </div>
+  </div>
+
+  <div class="view" id="mainView">
+  <div class="field">
+    <label for="count">number of koi <output id="countOut" for="count">7</output></label>
+    <input type="range" id="count" min="1" max="20" step="1" value="7">
+  </div>
+
+  <div class="field">
+    <label for="colors">koi colors</label>
+    <select id="colors">
+      <option value="mixed">mixed</option>
+      <option value="mix">mix with mine</option>
+      <option value="custom">only mine</option>
+      <option value="0">red + white</option>
+      <option value="1">tancho</option>
+      <option value="2">showa</option>
+      <option value="3">sanke</option>
+      <option value="4">gold</option>
+      <option value="5">orange</option>
+      <option value="6">platinum</option>
+    </select>
+    <button class="paintbtn" id="paintOpen">
+      <canvas id="paintPreview" width="40" height="12" aria-hidden="true"></canvas>
+      <span>paint my koi</span><span aria-hidden="true">&gt;</span>
+    </button>
+  </div>
+
+  <div class="field">
+    <label for="speed">swim speed <output id="speedOut" for="speed">5</output></label>
+    <input type="range" id="speed" min="1" max="10" step="1" value="5">
+  </div>
+
+  <div class="field">
+    <span class="label" id="waterLabel">water</span>
+    <div class="choices" id="water" role="group" aria-labelledby="waterLabel"></div>
+  </div>
+
+  <div class="field">
+    <span class="label" id="padsLabel">lily pads</span>
+    <div class="choices three" id="pads" role="group" aria-labelledby="padsLabel"></div>
+  </div>
+
+  <p class="keys">keys: f or space = food<br>s = settings</p>
+  </div>
+</section>
+
+<script>
+(() => {
+  // ---------------- palettes (same as the Sidephone app) ----------------
+  const WATERS = [
+    { name: "teal",      c: [0x0A2A2C, 0x0F3A3A, 0x144A46, 0x1B5C54, 0x267062, 0x3A8774] },
+    { name: "night",     c: [0x03060F, 0x060B19, 0x091124, 0x0D182F, 0x12203B, 0x1A2B4A] },
+    { name: "deep blue", c: [0x071A31, 0x0B2543, 0x103257, 0x16416D, 0x1F5285, 0x2E679C] },
+    { name: "jade",      c: [0x0E281B, 0x133624, 0x19462F, 0x21573A, 0x2C6946, 0x3E7E56] },
+  ];
+  const NIGHT = 1;
+  const WHITE = 0xF3EFE6, RED = 0xE2471F, ORANGE = 0xF28A22, BLACK = 0x231E1C,
+        GOLD = 0xF5C04A, CREAM = 0xF7DDA6, PLATINUM = 0xDCE3E3;
+  const PATTERNS = [
+    [WHITE, RED, RED, WHITE, RED, RED, WHITE, WHITE],        // kohaku (red + white)
+    [WHITE, RED, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE],  // tancho
+    [BLACK, RED, WHITE, BLACK, RED, BLACK, WHITE, BLACK],    // showa
+    [WHITE, RED, WHITE, RED, BLACK, WHITE, RED, WHITE],      // sanke
+    [GOLD, GOLD, GOLD, GOLD, GOLD, GOLD, CREAM, CREAM],      // gold
+    [ORANGE, ORANGE, ORANGE, ORANGE, ORANGE, ORANGE, ORANGE, CREAM], // orange
+    [PLATINUM, PLATINUM, PLATINUM, PLATINUM, PLATINUM, PLATINUM, WHITE, WHITE], // platinum
+  ];
+  // colors offered in "paint my koi"
+  const PALETTE = [
+    [WHITE, "white"], [CREAM, "cream"], [PLATINUM, "platinum"], [0xF4A6B8, "pink"], [RED, "red"],
+    [0xA8261A, "deep red"], [ORANGE, "orange"], [GOLD, "gold"], [0xF2E36B, "yellow"], [0x8A5A33, "brown"],
+    [BLACK, "black"], [0x4F6F96, "slate blue"], [0x6FA8C9, "sky blue"], [0x6E9E5A, "moss green"],
+  ];
+  const CUSTOM_DEFAULT = [0, 4, 4, 0, 10, 4, 0, 0];
+  const PART_NAMES = ["head", "body 1", "body 2", "body 3", "body 4", "body 5", "body 6", "tail"];
+  const PAD = 0x4E8C35, PAD_DARK = 0x346A27, PAD_LIGHT = 0x6FAA4B;
+  const PELLET = 0xC98B47, PELLET_LIGHT = 0xEBC07E;
+  const SEGS = 8, SEG_LEN = 1.6;
+  const PROFILE = [1.9, 2.4, 2.6, 2.4, 2.1, 1.7, 1.2, 0.8];
+  const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+  const PAD_MODES = ["none", "a few", "lots"];
+
+  // ---------------- settings (remembered in this browser only) ----------------
+  const DEFAULTS = { count: 7, colors: "mixed", speed: 5, water: 0, pads: 1, custom: CUSTOM_DEFAULT.slice() };
+  let prefs = { ...DEFAULTS, custom: CUSTOM_DEFAULT.slice() };
+  try {
+    const saved = JSON.parse(localStorage.getItem("koi-pond-settings") || "null");
+    if (saved && typeof saved === "object") prefs = { ...prefs, ...saved };
+  } catch (e) { /* storage unavailable: use defaults */ }
+  if (!Array.isArray(prefs.custom) || prefs.custom.length !== 8) prefs.custom = CUSTOM_DEFAULT.slice();
+  prefs.custom = prefs.custom.map((v) => clampIdx(v));
+  function clampIdx(v) { v = Math.round(+v) || 0; return v < 0 ? 0 : v >= PALETTE.length ? PALETTE.length - 1 : v; }
+  const customPattern = () => prefs.custom.map((i) => PALETTE[i][0]);
+  function savePrefs() {
+    try { localStorage.setItem("koi-pond-settings", JSON.stringify(prefs)); } catch (e) {}
+  }
+
+  // ---------------- helpers ----------------
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+  const wrap = (a) => {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  };
+  const dither = (x, y) => (BAYER[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
+  function mix(c1, c2, a) {
+    const ia = 255 - a;
+    const r = ((((c1 >> 16) & 255) * ia + ((c2 >> 16) & 255) * a) / 255) | 0;
+    const g = ((((c1 >> 8) & 255) * ia + ((c2 >> 8) & 255) * a) / 255) | 0;
+    const b = (((c1 & 255) * ia + (c2 & 255) * a) / 255) | 0;
+    return (r << 16) | (g << 8) | b;
+  }
+
+  // ---------------- canvas & pixel buffer ----------------
+  const canvas = document.getElementById("pond");
+  const ctx = canvas.getContext("2d");
+  let W = 0, H = 0, scale = 3, px, img, out32;
+
+  function set(x, y, c) {
+    x |= 0; y |= 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    px[y * W + x] = c;
+  }
+  function blend(x, y, c, a) {
+    x = Math.floor(x); y = Math.floor(y);
+    if (x < 0 || y < 0 || x >= W || y >= H || a <= 0) return;
+    const i = y * W + x;
+    px[i] = a >= 255 ? c : mix(px[i], c, a | 0);
+  }
+  function fillCircle(cx, cy, r, c, a) {
+    if (r <= 0) return;
+    const x0 = Math.floor(cx - r), x1 = Math.ceil(cx + r);
+    const y0 = Math.floor(cy - r), y1 = Math.ceil(cy + r);
+    const r2 = r * r;
+    for (let y = y0; y <= y1; y++) {
+      const dy = y + 0.5 - cy;
+      for (let x = x0; x <= x1; x++) {
+        const dx = x + 0.5 - cx;
+        if (dx * dx + dy * dy <= r2) blend(x, y, c, a);
+      }
+    }
+  }
+  function line(x0, y0, x1, y1, c, a) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy))));
+    let lx = NaN, ly = NaN;
+    for (let i = 0; i <= steps; i++) {
+      const x = Math.floor(x0 + (dx * i) / steps), y = Math.floor(y0 + (dy * i) / steps);
+      if (x === lx && y === ly) continue;
+      blend(x, y, c, a);
+      lx = x; ly = y;
+    }
+  }
+  function ring(cx, cy, r, c, a) {
+    const steps = Math.max(12, (r * 7) | 0);
+    let lx = NaN, ly = NaN;
+    for (let i = 0; i < steps; i++) {
+      const ang = (i * Math.PI * 2) / steps;
+      const x = Math.floor(cx + Math.cos(ang) * r);
+      const y = Math.floor(cy + Math.sin(ang) * r * 0.8); // slightly flattened, seen at an angle
+      if (x === lx && y === ly) continue;
+      blend(x, y, c, a);
+      lx = x; ly = y;
+    }
+  }
+
+  // ---------------- pond state ----------------
+  let koi = [], pellets = [], ripples = [], pads = [];
+  let floor, stars = [], flies = [];
+  let t = 0, ambient = 3, food = false;
+  let lastRippleX = 0, lastRippleY = 0;
+
+  function patternFor(i) {
+    if (prefs.colors === "custom") return customPattern();
+    if (prefs.colors === "mix") return i % 3 === 0 ? customPattern() : PATTERNS[i % PATTERNS.length];
+    if (prefs.colors === "mixed") return PATTERNS[i % PATTERNS.length];
+    return PATTERNS[+prefs.colors] || PATTERNS[0];
+  }
+
+  function newKoi(i) {
+    const k = {
+      x: new Float32Array(SEGS), y: new Float32Array(SEGS),
+      ang: rand(-3.14, 3.14), size: rand(0.85, 1.35), base: rand(5, 8),
+      phase: rand(0, 6), fear: 0, fleeAng: 0, wanderTimer: 0, colors: patternFor(i),
+    };
+    k.speed = k.base;
+    k.wanderHeading = k.ang;
+    const hx = rand(15, Math.max(16, W - 15)), hy = rand(15, Math.max(16, H - 15));
+    for (let j = 0; j < SEGS; j++) {
+      k.x[j] = hx - Math.cos(k.ang) * j * SEG_LEN;
+      k.y[j] = hy - Math.sin(k.ang) * j * SEG_LEN;
+    }
+    return k;
+  }
+
+  function syncKoi() {
+    while (koi.length > prefs.count) koi.pop();
+    while (koi.length < prefs.count) koi.push(newKoi(koi.length));
+    koi.forEach((k, i) => { k.colors = patternFor(i); });
+  }
+
+  function buildPads() {
+    pads = [];
+    const n = prefs.pads === 0 ? 0 : prefs.pads === 1 ? 4 : 7;
+    const spots = [[0.16, 0.12], [0.84, 0.3], [0.22, 0.78], [0.8, 0.9], [0.5, 0.06], [0.1, 0.48], [0.88, 0.62]];
+    for (let i = 0; i < n; i++) {
+      pads.push({
+        x: spots[i][0] * W + rand(-4, 4), y: spots[i][1] * H + rand(-4, 4),
+        r: rand(6, 9), notch: rand(0, 6.28), flower: i === 1 || i === 5,
+      });
+    }
+  }
+
+  function buildPond() {
+    // Pond floor: deeper (darker) in the middle, with pale stones on the bottom.
+    floor = new Float32Array(W * H);
+    const cx = W / 2, cy = H / 2;
+    const nStones = Math.round(9 * Math.max(1, (W * H) / (120 * 160)));
+    const stones = [];
+    for (let i = 0; i < nStones; i++) stones.push([rand(0, W), rand(0, H), rand(3, 8)]);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const dx = (x - cx) / cx, dy = (y - cy) / cy;
+        const d = Math.sqrt(dx * dx + dy * dy) / 1.414;
+        let v = -0.55 * (1 - d) + 0.1;
+        for (const st of stones) {
+          const sx = (x - st[0]) / st[2], sy = (y - st[1]) / (st[2] * 0.75);
+          const sd = sx * sx + sy * sy;
+          if (sd < 1) v += 0.35 * (1 - sd);
+        }
+        floor[y * W + x] = v;
+      }
+    }
+    stars = [];
+    const nStars = Math.round((W * H) / 320);
+    for (let i = 0; i < nStars; i++)
+      stars.push([rand(0, W), rand(0, H), rand(0, 6.28), rand(0.6, 2.2), Math.random() < 0.125]);
+    flies = [];
+    for (let i = 0; i < 6; i++) flies.push([rand(0, W), rand(0, H), rand(0, 6.28), rand(0.3, 0.8)]);
+    buildPads();
+    pellets = [];
+    ripples = [];
+  }
+
+  function layout() {
+    const w = window.innerWidth, h = window.innerHeight;
+    const s = Math.max(2, Math.round(Math.min(w, h) / 150));
+    const gw = Math.ceil(w / s), gh = Math.ceil(h / s);
+    if (gw === W && gh === H && s === scale) return;
+    scale = s; W = gw; H = gh;
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = W * scale + "px";
+    canvas.style.height = H * scale + "px";
+    img = ctx.createImageData(W, H);
+    out32 = new Uint32Array(img.data.buffer);
+    px = new Int32Array(W * H);
+    buildPond();
+    // keep existing fish, just tuck them inside the new edges
+    for (const k of koi)
+      for (let j = 0; j < SEGS; j++) {
+        k.x[j] = clamp(k.x[j], 3, W - 3);
+        k.y[j] = clamp(k.y[j], 3, H - 3);
+      }
+    syncKoi();
+  }
+
+  // ---------------- simulation ----------------
+  function addRipple(x, y, r, max, alpha) {
+    if (ripples.length > 40) return;
+    ripples.push({ x, y, r, life: 0, max, alpha });
+  }
+
+  function startle(x, y, radius) {
+    for (const k of koi) {
+      const d = Math.hypot(k.x[0] - x, k.y[0] - y);
+      if (d < radius) {
+        k.fear = Math.min(1, Math.max(k.fear, 1.15 - d / radius));
+        k.fleeAng = Math.atan2(k.y[0] - y, k.x[0] - x) + rand(-0.3, 0.3);
+        k.wanderHeading = k.fleeAng;
+      }
+    }
+  }
+
+  function dropFood(x, y) {
+    addRipple(x, y, 1, 1.2, 120);
+    for (let i = 0; i < 5 && pellets.length < 40; i++)
+      pellets.push({ x: clamp(x + rand(-4, 4), 1, W - 2), y: clamp(y + rand(-4, 4), 1, H - 2), age: 0 });
+  }
+
+  function updateKoi(k, dt, speedMul) {
+    const hx = k.x[0], hy = k.y[0];
+    const base = k.base * speedMul;
+
+    // Gentle wandering toward a heading that changes now and then
+    k.wanderTimer -= dt;
+    if (k.wanderTimer <= 0) {
+      k.wanderTimer = rand(3, 7);
+      k.wanderHeading = k.ang + rand(-0.9, 0.9);
+    }
+    let desired = k.wanderHeading, target = base, turnRate = 0.55;
+
+    // Food
+    let best = null, bestD = Math.max(75, Math.min(W, H) * 0.6);
+    for (const p of pellets) {
+      const d = Math.hypot(hx - p.x, hy - p.y);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    if (best) {
+      desired = Math.atan2(best.y - hy, best.x - hx);
+      const off = Math.abs(wrap(desired - k.ang));
+      target = base * (bestD < 12 ? 1.2 : 2.0) * (off > 1.2 ? 0.55 : 1);
+      turnRate = 1.6;
+      if (bestD < 2.6 * k.size) {
+        pellets.splice(pellets.indexOf(best), 1);
+        addRipple(best.x, best.y, 1, 0.9, 140);
+      }
+    }
+
+    // Fear overrides everything
+    if (k.fear > 0) {
+      desired = k.fleeAng;
+      target = base * (1 + 4 * k.fear);
+      turnRate = 4.5;
+      k.fear -= dt * 0.6;
+    }
+
+    // Keep clear of the edges and of each other
+    let dx = Math.cos(desired), dy = Math.sin(desired);
+    const m = 18;
+    if (hx < m) dx += ((m - hx) / m) * 2;
+    if (hx > W - m) dx -= ((hx - (W - m)) / m) * 2;
+    if (hy < m) dy += ((m - hy) / m) * 2;
+    if (hy > H - m) dy -= ((hy - (H - m)) / m) * 2;
+    for (const o of koi) {
+      if (o === k) continue;
+      const d = Math.hypot(hx - o.x[2], hy - o.y[2]);
+      if (d < 7 && d > 0.01) {
+        dx += ((hx - o.x[2]) / d) * ((7 - d) / 7) * 0.8;
+        dy += ((hy - o.y[2]) / d) * ((7 - d) / 7) * 0.8;
+      }
+    }
+    desired = Math.atan2(dy, dx);
+    if (hx < m || hx > W - m || hy < m || hy > H - m) {
+      turnRate = Math.max(turnRate, 1.4);
+      k.wanderHeading = desired;
+    }
+
+    // Fish can't pivot on the spot: cap turning so the turn radius stays wide
+    const maxRate = Math.max(0.35, k.speed / (7 * k.size));
+    const maxTurn = Math.min(turnRate, maxRate) * dt;
+    k.ang = wrap(k.ang + clamp(wrap(desired - k.ang), -maxTurn, maxTurn));
+    k.speed += (target - k.speed) * Math.min(1, dt * 2);
+
+    k.phase += dt * (2.5 + k.speed * 0.45);
+    const heading = k.ang + Math.sin(k.phase) * 0.18;
+    k.x[0] = clamp(hx + Math.cos(heading) * k.speed * dt, 2, W - 2);
+    k.y[0] = clamp(hy + Math.sin(heading) * k.speed * dt, 2, H - 2);
+
+    // Body follows the head like a chain
+    const seg = SEG_LEN * k.size;
+    for (let j = 1; j < SEGS; j++) {
+      const ex = k.x[j - 1] - k.x[j], ey = k.y[j - 1] - k.y[j];
+      const d = Math.sqrt(ex * ex + ey * ey);
+      if (d > seg) {
+        k.x[j] += (ex * (d - seg)) / d;
+        k.y[j] += (ey * (d - seg)) / d;
+      }
+    }
+  }
+
+  function update(dt) {
+    t += dt;
+    ambient -= dt;
+    if (ambient <= 0) {
+      ambient = rand(3, 7) * Math.min(1, (120 * 160) / (W * H)) + 1;
+      addRipple(rand(5, W - 5), rand(5, H - 5), 6, 1.6, 70);
+    }
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const r = ripples[i];
+      r.life += dt;
+      r.r += dt * 9;
+      if (r.life >= r.max) ripples.splice(i, 1);
+    }
+    for (let i = pellets.length - 1; i >= 0; i--) {
+      const p = pellets[i];
+      p.age += dt;
+      p.x += Math.sin(t * 0.7 + i) * dt * 0.4;
+      if (p.age > 45) pellets.splice(i, 1);
+    }
+    if (prefs.water === NIGHT) {
+      for (const f of flies) {
+        f[2] += dt * f[3];
+        f[0] += Math.cos(f[2]) * dt * 3;
+        f[1] += Math.sin(f[2] * 1.3) * dt * 2.5;
+        if (f[0] < 0) f[0] += W;
+        if (f[0] >= W) f[0] -= W;
+        if (f[1] < 0) f[1] += H;
+        if (f[1] >= H) f[1] -= H;
+      }
+    }
+    const speedMul = 0.35 + prefs.speed * 0.13; // 5 = normal pace
+    for (const k of koi) updateKoi(k, dt, speedMul);
+  }
+
+  // ---------------- drawing ----------------
+  function drawWater() {
+    const pal = WATERS[prefs.water].c, last = pal.length - 1;
+    const amp = prefs.water === NIGHT ? 0.6 : 1;
+    for (let y = 0; y < H; y++) {
+      const sy1 = y * 0.23 - t * 0.45;
+      for (let x = 0; x < W; x++) {
+        const v = floor[y * W + x] + amp * (
+          0.11 * (Math.sin(x * 0.31 + t * 0.6) + Math.sin(sy1) + Math.sin((x - y) * 0.17 + t * 0.3)) +
+          0.07 * Math.sin(x * 0.55 + Math.sin(y * 0.4 + t * 0.8) * 1.6 + t));
+        let i = ((v + 0.75) * 3.2 + dither(x, y) - 0.5) | 0;
+        if (i < 0) i = 0;
+        if (i > last) i = last;
+        px[y * W + x] = pal[i];
+      }
+    }
+  }
+
+  function drawNightSky() {
+    // the sky reflected in the water: twinkling stars and a broken moon
+    for (const st of stars) {
+      const tw = 0.5 + 0.5 * Math.sin(t * st[3] + st[2]);
+      const wob = Math.sin(t * 0.9 + st[1] * 0.3) * 0.8;
+      const x = Math.floor(st[0] + wob), y = Math.floor(st[1]);
+      const a = 40 + 200 * tw * tw;
+      blend(x, y, 0xEAF0FF, a);
+      if (st[4] && tw > 0.6) {
+        const a2 = a * 0.35;
+        blend(x - 1, y, 0xEAF0FF, a2); blend(x + 1, y, 0xEAF0FF, a2);
+        blend(x, y - 1, 0xEAF0FF, a2); blend(x, y + 1, 0xEAF0FF, a2);
+      }
+    }
+    const mx = W * 0.68, my = H * 0.2;
+    fillCircle(mx, my, 12, 0xB8C8E8, 14);
+    for (let dy = -5; dy <= 5; dy++) {
+      const half = Math.sqrt(Math.max(0, 30 - dy * dy)) * 1.2;
+      const shift = Math.sin(t * 1.1 + dy * 0.8) * 0.8;
+      for (let dx = Math.trunc(-half); dx <= Math.trunc(half); dx++) {
+        const br = Math.sin(t * 1.6 + dx * 0.5 + dy * 1.3);
+        if (br < -0.6) continue;
+        blend(mx + dx + shift, my + dy, 0xF1F3E2, 150 + 60 * br);
+      }
+    }
+    for (let dy = 7; dy < 40; dy += 2) {
+      const fade = 1 - (dy - 7) / 33;
+      const half = 2.5 + 3 * fade + Math.sin(t * 2 + dy) * 1.5;
+      const shift = Math.sin(t * 0.9 + dy * 0.4) * 2;
+      for (let dx = Math.trunc(-half); dx <= Math.trunc(half); dx++) {
+        const br = Math.sin(t * 2.4 + dx * 1.1 + dy * 0.7);
+        if (br < 0) continue;
+        blend(mx + dx + shift, my + dy, 0xE6EBDA, 130 * fade * br);
+      }
+    }
+  }
+
+  function drawKoi(k, shadow) {
+    const sz = k.size, night = prefs.water === NIGHT;
+    if (shadow) {
+      for (let j = SEGS - 1; j >= 0; j--) fillCircle(k.x[j] + 2.5, k.y[j] + 3.5, PROFILE[j] * sz, 0x000000, night ? 30 : 55);
+      return;
+    }
+    const dimTo = 0x0C1630, dim = night ? 110 : 0;
+    // tail fin
+    const tl = SEGS - 1;
+    let tx = k.x[tl] - k.x[tl - 1], ty = k.y[tl] - k.y[tl - 1];
+    const tlen = Math.hypot(tx, ty);
+    if (tlen > 0.01) {
+      tx /= tlen; ty /= tlen;
+      const sway = Math.sin(k.phase) * 1.2;
+      const ex = k.x[tl] + tx * 3 * sz, ey = k.y[tl] + ty * 3 * sz;
+      const fin = mix(mix(k.colors[tl], 0xFFFFFF, 90), dimTo, dim);
+      line(k.x[tl], k.y[tl], ex - ty * (1.8 + sway) * sz, ey + tx * (1.8 + sway) * sz, fin, 170);
+      line(k.x[tl], k.y[tl], ex + ty * (1.8 - sway) * sz, ey - tx * (1.8 - sway) * sz, fin, 170);
+    }
+    // pectoral fins
+    let fx = k.x[1] - k.x[2], fy = k.y[1] - k.y[2];
+    const fl = Math.hypot(fx, fy);
+    if (fl > 0.01) {
+      fx /= fl; fy /= fl;
+      const flap = 0.6 + 0.4 * Math.sin(k.phase * 1.3);
+      const o = PROFILE[2] * sz + 1.2 * flap;
+      const fin = mix(mix(k.colors[2], 0xFFFFFF, 110), dimTo, dim);
+      fillCircle(k.x[2] - fy * o - fx, k.y[2] + fx * o - fy, 0.9 * sz, fin, 150);
+      fillCircle(k.x[2] + fy * o - fx, k.y[2] - fx * o - fy, 0.9 * sz, fin, 150);
+    }
+    // body
+    for (let j = SEGS - 1; j >= 0; j--) fillCircle(k.x[j], k.y[j], PROFILE[j] * sz, mix(k.colors[j], dimTo, dim), 255);
+    // sheen along the back
+    for (let j = 1; j < 5; j++) blend(k.x[j], k.y[j], 0xFFFFFF, night ? 25 : 45);
+  }
+
+  function drawPad(p, shadow) {
+    const night = prefs.water === NIGHT;
+    const dimTo = 0x050A14, dim = night ? 130 : 0;
+    const x0 = Math.floor(p.x - p.r - 1), x1 = Math.floor(p.x + p.r + 1);
+    const y0 = Math.floor(p.y - p.r - 1), y1 = Math.floor(p.y + p.r + 1);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const dx = x + 0.5 - p.x, dy = (y + 0.5 - p.y) / 0.85;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > p.r) continue;
+        const a = Math.atan2(dy, dx);
+        if (Math.abs(wrap(a - p.notch)) < 0.32 && d > 0.8) continue;
+        if (shadow) { blend(x + 2, y + 2, 0x000000, 70); continue; }
+        let c = PAD;
+        if (d > p.r - 1.1) c = PAD_DARK;
+        else if (dx + dy < -p.r * 0.5) c = PAD_LIGHT;
+        if (d > 1.5 && d < p.r - 1.5) {
+          const va = ((a - p.notch) * 7) / 6.2832;
+          if (Math.abs(va - Math.round(va)) < 0.07) c = mix(c, PAD_LIGHT, 110);
+        }
+        set(x, y, mix(c, dimTo, dim));
+      }
+    }
+    if (!shadow && p.flower) {
+      const fx = Math.floor(p.x - p.r * 0.2), fy = Math.floor(p.y - p.r * 0.15);
+      let pink = 0xF0A3BF, light = 0xFFD9E6, deep = 0xD9779C;
+      if (night) { pink = mix(pink, dimTo, 90); light = mix(light, dimTo, 70); deep = mix(deep, dimTo, 90); }
+      for (const [ox, oy] of [[-1, -1], [1, -1], [-2, 0], [2, 0], [-1, 1], [1, 1], [0, -2], [0, 1]]) set(fx + ox, fy + oy, pink);
+      set(fx - 1, fy - 2, light); set(fx + 1, fy - 2, light);
+      set(fx - 2, fy + 1, deep); set(fx + 2, fy + 1, deep);
+      set(fx, fy, 0xF6D45A); set(fx, fy - 1, 0xF6D45A);
+    }
+  }
+
+  function render() {
+    const night = prefs.water === NIGHT;
+    drawWater();
+    if (night) drawNightSky();
+    for (const k of koi) drawKoi(k, true);
+    for (const k of koi) drawKoi(k, false);
+    const pc = night ? mix(PELLET, 0x0A1226, 90) : PELLET;
+    pellets.forEach((p) => {
+      const a = p.age > 40 ? (255 * (45 - p.age)) / 5 : 255;
+      blend(p.x, p.y + 1, WATERS[prefs.water].c[0], a / 3);
+      blend(p.x, p.y, pc, a);
+      if ((Math.floor(t * 2 + p.x) % 3) === 0) blend(p.x, p.y, PELLET_LIGHT, (a * (night ? 2 : 3)) / 3);
+    });
+    const rc = night ? 0x9FB4D9 : 0xBFE3D6;
+    for (const r of ripples) {
+      const f = 1 - r.life / r.max;
+      if (r.r > 0) ring(r.x, r.y, r.r, rc, r.alpha * f * f * (night ? 0.8 : 1));
+    }
+    for (const p of pads) drawPad(p, true);
+    for (const p of pads) drawPad(p, false);
+    if (night) {
+      for (const f of flies) {
+        const glow = 0.5 + 0.5 * Math.sin(t * 1.7 + f[2] * 3);
+        fillCircle(f[0], f[1], 2.2, 0xD8F07A, 35 * glow);
+        blend(f[0], f[1], 0xF2FFB0, 60 + 195 * glow);
+      }
+    }
+    // pixel buffer -> canvas (ImageData is RGBA bytes; on little-endian that's 0xAABBGGRR)
+    for (let i = 0, n = W * H; i < n; i++) {
+      const c = px[i];
+      out32[i] = 0xFF000000 | ((c & 255) << 16) | (c & 0xFF00) | ((c >> 16) & 255);
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ---------------- UI ----------------
+  const body = document.body;
+  const foodBtn = document.getElementById("foodBtn");
+  const settingsBtn = document.getElementById("settingsBtn");
+  const panel = document.getElementById("panel");
+  const toast = document.getElementById("toast");
+  const hint = document.getElementById("hint");
+  let idleTimer = 0, toastTimer = 0;
+
+  function wake() {
+    body.classList.remove("idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if (panel.hidden) body.classList.add("idle"); }, 4000);
+  }
+  function say(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove("show"), 1400);
+  }
+  function toggleFood() {
+    food = !food;
+    foodBtn.setAttribute("aria-pressed", String(food));
+    say(food ? "food on" : "food off");
+    wake();
+  }
+  function openPanel(open) {
+    panel.hidden = !open;
+    settingsBtn.setAttribute("aria-expanded", String(open));
+    if (open) {
+      showPainter(false);
+      document.getElementById("count").focus({ preventScroll: true });
+    }
+    wake();
+  }
+
+  // ---------------- paint my koi ----------------
+  const mainView = document.getElementById("mainView");
+  const paintView = document.getElementById("paintView");
+  const panelTitle = document.getElementById("panelTitle");
+  const pcv = document.getElementById("painterCanvas");
+  const pctx = pcv.getContext("2d");
+  const PW = pcv.width, PH = pcv.height;
+  const pimg = pctx.createImageData(PW, PH);
+  const pout = new Uint32Array(pimg.data.buffer);
+  const prevCv = document.getElementById("paintPreview");
+  const prevCtx = prevCv.getContext("2d");
+  const swatchBox = document.getElementById("swatches");
+  const partName = document.getElementById("partName");
+  let part = 0;
+
+  // section centres for the big koi (head on the left)
+  const segX = (j) => 11 + j * 6.4;
+  const segY = (j) => 15 + Math.sin(t * 1.5 - j * 0.6) * j * 0.18;
+  const segR = (j) => PROFILE[j] * 2.6;
+
+  function drawKoiInto(buf, w, h, ox, oy, step, rad, sway, sel) {
+    // tiny local rasterizer so the painter can share the pond's look
+    const put = (x, y, c, a) => {
+      x = Math.floor(x); y = Math.floor(y);
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      const i = y * w + x;
+      buf[i] = a >= 255 ? c : mix(buf[i], c, a | 0);
+    };
+    const disc = (cx, cy, r, c, a) => {
+      for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++)
+        for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
+          const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+          if (dx * dx + dy * dy <= r * r) put(x, y, c, a);
+        }
+    };
+    const pat = customPattern();
+    const sx = (j) => ox + j * step, sy = (j) => oy + (sway ? Math.sin(t * 1.5 - j * 0.6) * j * 0.18 : 0);
+    const tx = sx(7), ty = sy(7);
+    const fin = mix(pat[7], 0xFFFFFF, 90);
+    for (let k = 0; k <= 8; k++) {
+      const ex = tx + rad * 3.2, ey = ty - rad * 2.4 + (k * rad * 4.8) / 8;
+      const n = Math.ceil(Math.max(Math.abs(ex - tx), Math.abs(ey - ty)) * 2);
+      for (let i = 0; i <= n; i++) put(tx + ((ex - tx) * i) / n, ty + ((ey - ty) * i) / n, fin, 200);
+    }
+    const pf = mix(pat[2], 0xFFFFFF, 110);
+    disc(sx(2) - rad * 0.5, sy(2) - PROFILE[2] * rad - rad * 0.8, rad * 0.9, pf, 190);
+    disc(sx(2) - rad * 0.5, sy(2) + PROFILE[2] * rad + rad * 0.8, rad * 0.9, pf, 190);
+    for (let j = 7; j >= 0; j--) disc(sx(j), sy(j), PROFILE[j] * rad, pat[j], 255);
+    for (let j = 1; j < 5; j++) put(sx(j), sy(j) - PROFILE[j] * rad * 0.5, 0xFFFFFF, 60);
+    if (sel >= 0) {
+      const r = PROFILE[sel] * rad + 1.2, pulse = 0.55 + 0.45 * Math.sin(t * 5);
+      for (let i = 0; i < 40; i++) {
+        const a = (i / 40) * Math.PI * 2;
+        put(sx(sel) + Math.cos(a) * r, sy(sel) + Math.sin(a) * r, 0xFFFFFF, 210 * pulse);
+      }
+    }
+  }
+
+  const pbuf = new Int32Array(PW * PH), prevBuf = new Int32Array(prevCv.width * prevCv.height);
+  const prevImg = prevCtx.createImageData(prevCv.width, prevCv.height);
+  const prevOut = new Uint32Array(prevImg.data.buffer);
+  function blit(buf, out32, ctx2, im) {
+    for (let i = 0; i < buf.length; i++) {
+      const c = buf[i];
+      out32[i] = 0xFF000000 | ((c & 255) << 16) | (c & 0xFF00) | ((c >> 16) & 255);
+    }
+    ctx2.putImageData(im, 0, 0);
+  }
+  function renderPainter() {
+    const pal = WATERS[prefs.water].c;
+    for (let y = 0; y < PH; y++)
+      for (let x = 0; x < PW; x++) {
+        let i = (((Math.sin(x * 0.4 + t * 0.6) + Math.sin(y * 0.5 - t * 0.4)) * 0.35 + 2.4 + dither(x, y) - 0.5) | 0);
+        pbuf[y * PW + x] = pal[clamp(i, 0, pal.length - 1)];
+      }
+    drawKoiInto(pbuf, PW, PH, 11, 15, 6.4, 2.6, true, part);
+    blit(pbuf, pout, pctx, pimg);
+  }
+  function renderPreview() {
+    const pw = prevCv.width, ph = prevCv.height, pal = WATERS[prefs.water].c;
+    prevBuf.fill(pal[2]);
+    drawKoiInto(prevBuf, pw, ph, 5, 6, 3.3, 1.25, false, -1);
+    blit(prevBuf, prevOut, prevCtx, prevImg);
+  }
+
+  PALETTE.forEach(([c, name], i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.style.background = "#" + c.toString(16).padStart(6, "0");
+    b.setAttribute("aria-label", name);
+    b.title = name;
+    b.addEventListener("click", () => paint(i));
+    swatchBox.append(b);
+  });
+
+  function refreshPainter() {
+    partName.textContent = PART_NAMES[part];
+    [...swatchBox.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === prefs.custom[part])));
+    renderPreview();
+  }
+  function paint(i) {
+    prefs.custom[part] = i;
+    // painting means you want to see your koi: switch the pond to include it
+    if (prefs.colors !== "mix" && prefs.colors !== "custom") prefs.colors = "mix";
+    syncKoi();
+    savePrefs();
+    refreshPainter();
+    colors.value = prefs.colors;
+  }
+  function showPainter(on) {
+    paintView.hidden = !on;
+    mainView.hidden = on;
+    panelTitle.textContent = on ? "paint my koi" : "pond";
+    if (on) { refreshPainter(); renderPainter(); swatchBox.children[prefs.custom[part]].focus({ preventScroll: true }); }
+    else renderPreview();
+  }
+  document.getElementById("paintOpen").addEventListener("click", () => showPainter(true));
+  document.getElementById("paintDone").addEventListener("click", () => {
+    showPainter(false);
+    document.getElementById("paintOpen").focus({ preventScroll: true });
+  });
+  document.getElementById("paintReset").addEventListener("click", () => {
+    prefs.custom = CUSTOM_DEFAULT.slice();
+    syncKoi(); savePrefs(); refreshPainter();
+  });
+  document.getElementById("partPrev").addEventListener("click", () => { part = (part + 7) % 8; refreshPainter(); });
+  document.getElementById("partNext").addEventListener("click", () => { part = (part + 1) % 8; refreshPainter(); });
+  pcv.addEventListener("pointerdown", (e) => {
+    const r = pcv.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * PW, y = ((e.clientY - r.top) / r.height) * PH;
+    let best = -1, bd = 1e9;
+    for (let j = 0; j < 8; j++) {
+      const d = Math.hypot(x - segX(j), y - segY(j));
+      if (d < Math.max(4, segR(j) + 2) && d < bd) { bd = d; best = j; }
+    }
+    if (best < 0 && x > segX(7)) best = 7; // the tail fin counts as the tail
+    if (best < 0) return;
+    if (best === part) paint((prefs.custom[part] + 1) % PALETTE.length); // tap again to cycle colors
+    part = best;
+    refreshPainter();
+  });
+  let hintShown = true;
+  function dismissHint() {
+    if (!hintShown) return;
+    hintShown = false;
+    hint.classList.add("gone");
+  }
+  setTimeout(dismissHint, 9000);
+
+  foodBtn.addEventListener("click", toggleFood);
+  settingsBtn.addEventListener("click", () => openPanel(panel.hidden));
+  document.getElementById("closeBtn").addEventListener("click", () => { openPanel(false); settingsBtn.focus(); });
+
+  // settings controls
+  const count = document.getElementById("count"), countOut = document.getElementById("countOut");
+  const speed = document.getElementById("speed"), speedOut = document.getElementById("speedOut");
+  const colors = document.getElementById("colors");
+  const waterGroup = document.getElementById("water"), padsGroup = document.getElementById("pads");
+
+  WATERS.forEach((w, i) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.type = "button";
+    const sw = document.createElement("div");
+    sw.className = "swatch";
+    const hex = (c) => "#" + c.toString(16).padStart(6, "0");
+    sw.style.background = `linear-gradient(180deg, ${hex(w.c[4])}, ${hex(w.c[2])} 60%, ${hex(w.c[0])})`;
+    b.append(sw, document.createTextNode(w.name));
+    b.addEventListener("click", () => { prefs.water = i; savePrefs(); refreshControls(); });
+    waterGroup.append(b);
+  });
+  PAD_MODES.forEach((name, i) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.type = "button";
+    b.textContent = name;
+    b.addEventListener("click", () => { prefs.pads = i; savePrefs(); buildPads(); refreshControls(); });
+    padsGroup.append(b);
+  });
+
+  function refreshControls() {
+    count.value = prefs.count; countOut.textContent = prefs.count;
+    speed.value = prefs.speed; speedOut.textContent = prefs.speed;
+    colors.value = String(prefs.colors);
+    [...waterGroup.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === prefs.water)));
+    [...padsGroup.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === prefs.pads)));
+    renderPreview();
+  }
+  count.addEventListener("input", () => { prefs.count = +count.value; countOut.textContent = count.value; syncKoi(); savePrefs(); });
+  speed.addEventListener("input", () => { prefs.speed = +speed.value; speedOut.textContent = speed.value; savePrefs(); });
+  colors.addEventListener("change", () => { prefs.colors = colors.value; syncKoi(); savePrefs(); });
+
+  // pond input
+  let wakeLock = null;
+  function keepAwake() {
+    if (!("wakeLock" in navigator) || wakeLock) return;
+    navigator.wakeLock.request("screen").then((l) => {
+      wakeLock = l;
+      l.addEventListener("release", () => { wakeLock = null; });
+    }).catch(() => {});
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && keepAwake.used) keepAwake(); });
+
+  let dragging = false;
+  canvas.addEventListener("pointerdown", (e) => {
+    keepAwake.used = true;
+    keepAwake();
+    dismissHint();
+    wake();
+    dragging = true;
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    const x = e.clientX / scale, y = e.clientY / scale;
+    lastRippleX = x; lastRippleY = y;
+    if (food) dropFood(x, y);
+    else {
+      addRipple(x, y, 1, 1.8, 170);
+      addRipple(x, y, -3, 2.0, 110);
+      startle(x, y, 45);
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "mouse" && !dragging) { wake(); return; }
+    if (!dragging) return;
+    const x = e.clientX / scale, y = e.clientY / scale;
+    // dragging a finger through the water leaves a ripple trail
+    if (Math.hypot(x - lastRippleX, y - lastRippleY) > 6) {
+      lastRippleX = x; lastRippleY = y;
+      addRipple(x, y, 1, 1.2, 110);
+      if (!food) startle(x, y, 22);
+    }
+  });
+  const endDrag = () => { dragging = false; };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) {
+      if (e.key === "Escape") { openPanel(false); settingsBtn.focus(); }
+      return;
+    }
+    if (e.key === "f" || e.key === "F" || (e.key === " " && e.target === document.body)) {
+      e.preventDefault();
+      toggleFood();
+    } else if (e.key === "s" || e.key === "S") {
+      openPanel(panel.hidden);
+    } else if (e.key === "Escape" && !panel.hidden) {
+      openPanel(false);
+      settingsBtn.focus();
+    } else {
+      wake();
+    }
+  });
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(layout, 120);
+  });
+
+  // ---------------- go ----------------
+  layout();
+  refreshControls();
+  wake();
+  for (let i = 0; i < 60; i++) update(1 / 30); // let the fish spread out before the first frame
+  render();
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    update(dt);
+    render();
+    if (!panel.hidden && !paintView.hidden) renderPainter();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
