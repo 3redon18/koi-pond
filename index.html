@@ -63,6 +63,14 @@ body {
 #fsBtn .fs-exit { display: none; }
 #fsBtn[aria-pressed="true"] .fs-exit { display: block; }
 #fsBtn[aria-pressed="true"] .fs-enter { display: none; }
+#soundBtn {
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  left: calc(14px + env(safe-area-inset-left, 0px));
+}
+#soundBtn .waves { display: none; }
+#soundBtn[aria-pressed="true"] .waves { display: block; }
+#soundBtn[aria-pressed="true"] .mute { display: none; }
+#soundBtn[aria-pressed="true"] { border-color: var(--accent); }
 #foodBtn {
   bottom: calc(14px + env(safe-area-inset-bottom, 0px));
   right: calc(14px + env(safe-area-inset-right, 0px));
@@ -292,6 +300,14 @@ select option { background: #0a2223; color: var(--ink); }
   </svg>
 </button>
 
+<button class="ctl round" id="soundBtn" aria-label="Sound on" aria-pressed="false">
+  <svg viewBox="0 0 14 14" aria-hidden="true" fill="currentColor">
+    <rect x="1" y="5" width="3" height="4"/><rect x="4" y="4" width="1" height="6"/><rect x="5" y="3" width="1" height="8"/><rect x="6" y="2" width="1" height="10"/>
+    <g class="waves"><rect x="9" y="5" width="1" height="4"/><rect x="11" y="3" width="1" height="8"/><rect x="10" y="4" width="1" height="1"/><rect x="10" y="9" width="1" height="1"/></g>
+    <g class="mute"><rect x="9" y="5" width="1" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="11" y="7" width="1" height="1"/><rect x="12" y="8" width="1" height="1"/><rect x="12" y="5" width="1" height="1"/><rect x="11" y="6" width="1" height="1"/><rect x="10" y="7" width="1" height="1"/><rect x="9" y="8" width="1" height="1"/></g>
+  </svg>
+</button>
+
 <button class="ctl round" id="foodBtn" aria-label="Food" aria-pressed="false">
   <svg viewBox="0 0 14 14" aria-hidden="true">
     <g class="crumbs" fill="#ebc07e"><rect x="3" y="1" width="1" height="1"/><rect x="7" y="0" width="1" height="1"/><rect x="10" y="2" width="1" height="1"/></g>
@@ -329,6 +345,11 @@ select option { background: #0a2223; color: var(--ink); }
   </div>
 
   <div class="view" id="mainView">
+  <div class="field">
+    <label for="volume">volume <output id="volumeOut" for="volume">6</output></label>
+    <input type="range" id="volume" min="1" max="10" step="1" value="6">
+  </div>
+
   <div class="field">
     <label for="count">number of koi <output id="countOut" for="count">7</output></label>
     <input type="range" id="count" min="1" max="20" step="1" value="7">
@@ -379,7 +400,7 @@ select option { background: #0a2223; color: var(--ink); }
     <div class="choices two" id="visitors" role="group" aria-labelledby="visitorsLabel"></div>
   </div>
 
-  <p class="keys">keys: f or space = food<br>s = settings<br>enter = full screen</p>
+  <p class="keys">keys: f or space = food<br>m = sound<br>s = settings<br>enter = full screen<br>rest the mouse on the water and the koi come to look</p>
   </div>
 </section>
 
@@ -421,7 +442,7 @@ select option { background: #0a2223; color: var(--ink); }
 
   // ---------------- settings (remembered in this browser only) ----------------
   const WEATHERS = [["clear", "clear"], ["rain", "rain"], ["blossoms", "blossoms"], ["leaves", "leaves"], ["snow", "snow"], ["season", "by season"]];
-  const DEFAULTS = { count: 7, colors: "mixed", speed: 5, water: 0, pads: 1, custom: CUSTOM_DEFAULT.slice(), weather: "season", visitors: 1 };
+  const DEFAULTS = { count: 7, colors: "mixed", speed: 5, water: 0, pads: 1, custom: CUSTOM_DEFAULT.slice(), weather: "season", visitors: 1, sound: 0, volume: 6 };
   let prefs = { ...DEFAULTS, custom: CUSTOM_DEFAULT.slice() };
   try {
     const saved = JSON.parse(localStorage.getItem("koi-pond-settings") || "null");
@@ -522,7 +543,7 @@ select option { background: #0a2223; color: var(--ink); }
     const k = {
       x: new Float32Array(SEGS), y: new Float32Array(SEGS),
       ang: rand(-3.14, 3.14), size: rand(0.85, 1.35), base: rand(5, 8),
-      phase: rand(0, 6), fear: 0, fleeAng: 0, wanderTimer: 0, colors: patternFor(i),
+      phase: rand(0, 6), fear: 0, fleeAng: 0, wanderTimer: 0, colors: patternFor(i), curious: rand(0.3, 1), bored: 0, look: 0,
     };
     k.speed = k.base;
     k.wanderHeading = k.ang;
@@ -630,6 +651,153 @@ select option { background: #0a2223; color: var(--ink); }
       pellets.push({ x: clamp(x + rand(-4, 4), 1, W - 2), y: clamp(y + rand(-4, 4), 1, H - 2), age: 0 });
   }
 
+  // ---------------- sound (all made in the browser, no audio files) ----------------
+  const audio = { ctx: null, master: null, ambGain: null, rainGain: null, white: null };
+  const soundOn = () => !!(prefs.sound && audio.ctx && audio.ctx.state === "running");
+  function audioInit() {
+    if (audio.ctx) return true;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    const c = new AC();
+    audio.ctx = c;
+    audio.master = c.createGain();
+    audio.master.gain.value = 0;
+    audio.master.connect(c.destination);
+    const len = c.sampleRate * 3;
+    const brownBuf = c.createBuffer(1, len, c.sampleRate), whiteBuf = c.createBuffer(1, len, c.sampleRate);
+    const bd = brownBuf.getChannelData(0), wd = whiteBuf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      const w = Math.random() * 2 - 1;
+      wd[i] = w;
+      last = (last + 0.02 * w) / 1.02;
+      bd[i] = last * 3.5;
+    }
+    audio.white = whiteBuf;
+    const loop = (buf) => { const s = c.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); return s; };
+    // the pond's hush: low, slowly breathing water noise
+    const lp = c.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 420;
+    audio.ambGain = c.createGain(); audio.ambGain.gain.value = 0.32;
+    const lfo = c.createOscillator(), lfoGain = c.createGain();
+    lfo.frequency.value = 0.07; lfoGain.gain.value = 0.12;
+    lfo.connect(lfoGain).connect(audio.ambGain.gain); lfo.start();
+    loop(brownBuf).connect(lp).connect(audio.ambGain).connect(audio.master);
+    // rain hiss, faded in only when it rains
+    const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1400;
+    const lp2 = c.createBiquadFilter(); lp2.type = "lowpass"; lp2.frequency.value = 6500;
+    audio.rainGain = c.createGain(); audio.rainGain.gain.value = 0;
+    loop(whiteBuf).connect(hp).connect(lp2).connect(audio.rainGain).connect(audio.master);
+    return true;
+  }
+  function applyVolume() {
+    if (!audio.ctx) return;
+    const v = prefs.sound ? Math.pow(prefs.volume / 10, 2) * 0.9 : 0;
+    audio.master.gain.setTargetAtTime(v, audio.ctx.currentTime, 0.25);
+  }
+  function setSound(on) {
+    prefs.sound = on ? 1 : 0;
+    savePrefs();
+    if (on && audioInit()) audio.ctx.resume().then(applyVolume).catch(() => {});
+    applyVolume();
+    soundBtn.setAttribute("aria-pressed", String(!!on));
+    soundBtn.setAttribute("aria-label", on ? "Sound off" : "Sound on");
+  }
+  function tone(f0, f1, dur, gain, type = "sine", when = 0) {
+    if (!soundOn()) return;
+    const c = audio.ctx, t0 = c.currentTime + when;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t0);
+    o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur + 0.08);
+    o.connect(g).connect(audio.master);
+    o.start(t0);
+    o.stop(t0 + dur + 0.1);
+  }
+  function noiseBurst(freq, q, dur, gain, when = 0) {
+    if (!soundOn()) return;
+    const c = audio.ctx, t0 = c.currentTime + when;
+    const s = c.createBufferSource(); s.buffer = audio.white;
+    const bp = c.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = freq; bp.Q.value = q;
+    const g = c.createGain();
+    g.gain.setValueAtTime(gain, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    s.connect(bp).connect(g).connect(audio.master);
+    s.start(t0, Math.random() * 2);
+    s.stop(t0 + dur + 0.05);
+  }
+  const sfx = {
+    plip: () => { tone(rand(820, 1000), 380, 0.09, 0.22); tone(rand(1100, 1300), 700, 0.05, 0.06, "sine", 0.07); },
+    drip: (g = 0.07) => tone(rand(600, 950), 320, 0.08, g),
+    nibble: () => tone(rand(480, 560), 240, 0.06, 0.07),
+    gulp: () => tone(rand(240, 290), 130, 0.12, 0.12),
+    splash: (g = 0.24) => { noiseBurst(900, 0.7, 0.28, g); tone(320, 110, 0.16, g * 0.6); },
+    croak: (g = 0.2) => {
+      if (!soundOn()) return;
+      const c = audio.ctx;
+      for (const off of [0, 0.19]) {
+        const t0 = c.currentTime + off;
+        const o = c.createOscillator(), lp = c.createBiquadFilter(), gg = c.createGain();
+        o.type = "sawtooth";
+        o.frequency.setValueAtTime(118, t0);
+        o.frequency.exponentialRampToValueAtTime(82, t0 + 0.13);
+        lp.type = "lowpass"; lp.frequency.value = 650; lp.Q.value = 4;
+        gg.gain.setValueAtTime(0.0001, t0);
+        gg.gain.exponentialRampToValueAtTime(g, t0 + 0.02);
+        gg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+        o.connect(lp).connect(gg).connect(audio.master);
+        o.start(t0); o.stop(t0 + 0.16);
+      }
+    },
+    cricket: () => { for (let i = 0; i < 3; i++) tone(4300, 4200, 0.025, 0.018, "sine", i * 0.045); },
+    tick: () => tone(rand(1300, 1600), 900, 0.03, 0.025),
+  };
+  let cricketTimer = 3, farFrogTimer = 20, rainDripTimer = 0;
+  function updateSound(dt) {
+    if (!soundOn()) return;
+    const c = audio.ctx, w = currentWeather();
+    audio.rainGain.gain.setTargetAtTime(w === "rain" ? 0.22 : 0, c.currentTime, 0.8);
+    audio.ambGain.gain.setTargetAtTime(w === "snow" ? 0.2 : 0.32, c.currentTime, 0.8);
+    if (w === "rain" && (rainDripTimer -= dt) <= 0) { rainDripTimer = rand(0.05, 0.25); sfx.drip(0.03); }
+    if (prefs.water === NIGHT) {
+      if ((cricketTimer -= dt) <= 0) { cricketTimer = rand(0.8, 3.5); sfx.cricket(); }
+      if ((farFrogTimer -= dt) <= 0) { farFrogTimer = rand(18, 45); sfx.croak(0.05); }
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!audio.ctx) return;
+    if (document.hidden) audio.ctx.suspend().catch(() => {});
+    else if (prefs.sound) audio.ctx.resume().catch(() => {});
+  });
+
+  // ---------------- curious koi (desktop mouse) ----------------
+  // Rest the cursor over the water and nearby koi come to look; whip it across and they scatter.
+  const cursor = { on: false, x: 0, y: 0, still: 0, speed: 0, lastT: 0, scareCool: 0 };
+  function updateCursor(dt) {
+    if (!cursor.on) return;
+    cursor.speed *= Math.max(0, 1 - dt * 8);
+    cursor.still = cursor.speed < 6 ? cursor.still + dt : 0;
+    if (cursor.scareCool > 0) cursor.scareCool -= dt;
+  }
+  function onCursorMove(x, y) {
+    const now = performance.now();
+    if (cursor.on && cursor.lastT) {
+      const dt = Math.max(0.008, (now - cursor.lastT) / 1000);
+      const v = Math.hypot(x - cursor.x, y - cursor.y) / dt;
+      cursor.speed = cursor.speed * 0.5 + v * 0.5;
+      if (cursor.speed > 160 && cursor.scareCool <= 0) {
+        // scare along the whole path the cursor swept, not just where it ended up
+        const len = Math.hypot(x - cursor.x, y - cursor.y), n = Math.max(1, Math.ceil(len / 8));
+        for (let i = 0; i <= n; i++) startle(cursor.x + ((x - cursor.x) * i) / n, cursor.y + ((y - cursor.y) * i) / n, 22);
+        cursor.scareCool = 0.15;
+      }
+    }
+    cursor.on = true;
+    cursor.x = x; cursor.y = y; cursor.lastT = now;
+  }
+
   // ---------------- weather ----------------
   // Things fall toward the water (h = height above it), then float on the surface for a while.
   let drift = [], spawnAcc = 0;
@@ -673,7 +841,10 @@ select option { background: #0a2223; color: var(--ink); }
         if (Math.random() < dt * 3) d.flip = !d.flip;
         if (d.h <= 0) {
           d.h = 0;
-          if (d.kind !== "snow") addRipple(d.x, d.y, 0.5, 0.8, 70);
+          if (d.kind !== "snow") {
+            addRipple(d.x, d.y, 0.5, 0.8, 70);
+            if (Math.random() < 0.15) sfx.tick();
+          }
         }
         continue;
       }
@@ -755,6 +926,7 @@ select option { background: #0a2223; color: var(--ink); }
           frog.up = Math.random() < 0.5;
           frog.state = 1; frog.timer = 2.2;
           addRipple(frog.x, frog.y, 1, 1.2, 110);
+          sfx.drip(0.1);
         }
         break;
       case 1: // just its eyes above the water
@@ -775,6 +947,7 @@ select option { background: #0a2223; color: var(--ink); }
           else {
             addRipple(frog.x, frog.y, 1, 1.6, 170);
             addRipple(frog.x, frog.y, -2, 1.8, 100);
+            sfx.splash(0.16);
             frog.state = 0; frog.timer = rand(45, 90);
           }
         }
@@ -782,7 +955,7 @@ select option { background: #0a2223; color: var(--ink); }
       case 3: // sitting
         frog.blink = frog.blink > 0 ? frog.blink - dt : (Math.random() < dt * 0.4 ? 0.18 : 0);
         if (frog.croak > 0) frog.croak -= dt;
-        else if (Math.random() < dt * 0.06) frog.croak = 0.9;
+        else if (Math.random() < dt * 0.06) { frog.croak = 0.9; sfx.croak(); }
         if ((frog.timer -= dt) <= 0) frogHopOff();
         break;
     }
@@ -853,7 +1026,7 @@ select option { background: #0a2223; color: var(--ink); }
         return;
       }
       fly.hover = rand(0.5, 2.2);
-      if (Math.random() < 0.35) addRipple(fly.x, fly.y + 1, 0.4, 0.9, 120); // touches the water
+      if (Math.random() < 0.35) { addRipple(fly.x, fly.y + 1, 0.4, 0.9, 120); sfx.tick(); } // touches the water
       fly.tx = clamp(fly.x + rand(-W * 0.4, W * 0.4), 6, W - 6);
       fly.ty = clamp(fly.y + rand(-H * 0.4, H * 0.4), 6, H - 6);
     } else {
@@ -891,6 +1064,7 @@ select option { background: #0a2223; color: var(--ink); }
       const g = gulps[i];
       if ((g.timer -= dt) > 0) continue;
       addRipple(g.k.x[0] + Math.cos(g.k.ang) * 1.5, g.k.y[0] + Math.sin(g.k.ang) * 1.5, 0.5, 1.0, 150);
+      sfx.gulp();
       g.timer = 0.35;
       if (++g.n >= 2) gulps.splice(i, 1);
     }
@@ -906,6 +1080,7 @@ select option { background: #0a2223; color: var(--ink); }
     if (frog.state === 3 && Math.hypot(x - frog.x, y - frog.y) < 6) {
       frog.croak = 0.9;
       frog.timer = 1.1; // croaks, then hops off
+      sfx.croak();
       return true;
     }
     return false;
@@ -937,6 +1112,23 @@ select option { background: #0a2223; color: var(--ink); }
       if (bestD < 2.6 * k.size) {
         pellets.splice(pellets.indexOf(best), 1);
         addRipple(best.x, best.y, 1, 0.9, 140);
+        sfx.nibble();
+      }
+    } else if (k.bored > 0) {
+      k.bored -= dt;
+    } else if (cursor.on && cursor.still > 0.6 && !dragging) {
+      // curious: swim over to look at a resting cursor, slowing as they arrive,
+      // then lose interest after a while and wander off
+      const d = Math.hypot(cursor.x - hx, cursor.y - hy), reach = 20 + Math.min(W, H) * (0.2 + 0.45 * k.curious);
+      if (d < 12 && (k.look = (k.look || 0) + dt) > 5 + 8 * k.curious) {
+        k.look = 0;
+        k.bored = rand(8, 20);
+        k.wanderHeading = k.ang + rand(-1.5, 1.5);
+      } else if (d < reach) {
+        desired = Math.atan2(cursor.y - hy, cursor.x - hx);
+        target = base * (d < 7 ? 0.25 : d < 15 ? 0.6 : 1.1);
+        turnRate = 1.1;
+        k.wanderTimer = Math.max(k.wanderTimer, 1);
       }
     }
 
@@ -998,6 +1190,7 @@ select option { background: #0a2223; color: var(--ink); }
     if (ambient <= 0) {
       ambient = rand(3, 7) * Math.min(1, (120 * 160) / (W * H)) + 1;
       addRipple(rand(5, W - 5), rand(5, H - 5), 6, 1.6, 70);
+      sfx.drip();
     }
     for (let i = ripples.length - 1; i >= 0; i--) {
       const r = ripples[i];
@@ -1024,6 +1217,8 @@ select option { background: #0a2223; color: var(--ink); }
     }
     const speedMul = 0.35 + prefs.speed * 0.13; // 5 = normal pace
     for (const k of koi) updateKoi(k, dt, speedMul);
+    updateCursor(dt);
+    updateSound(dt);
     updateWeather(dt);
     updateFrog(dt);
     updateFly(dt);
@@ -1230,7 +1425,7 @@ select option { background: #0a2223; color: var(--ink); }
     settingsBtn.setAttribute("aria-expanded", String(open));
     if (open) {
       showPainter(false);
-      document.getElementById("count").focus({ preventScroll: true });
+      document.getElementById("volume").focus({ preventScroll: true });
     }
     wake();
   }
@@ -1385,6 +1580,16 @@ select option { background: #0a2223; color: var(--ink); }
   setTimeout(dismissHint, 9000);
 
   foodBtn.addEventListener("click", toggleFood);
+  const soundBtn = document.getElementById("soundBtn");
+  soundBtn.addEventListener("click", () => { setSound(!prefs.sound); say(prefs.sound ? "sound on" : "sound off"); wake(); });
+  soundBtn.setAttribute("aria-pressed", String(!!prefs.sound));
+  soundBtn.setAttribute("aria-label", prefs.sound ? "Sound off" : "Sound on");
+  const volume = document.getElementById("volume"), volumeOut = document.getElementById("volumeOut");
+  volume.addEventListener("input", () => {
+    prefs.volume = +volume.value; volumeOut.textContent = volume.value; savePrefs(); applyVolume();
+    if (!prefs.sound) setSound(1);
+    sfx.plip();
+  });
 
   // ---------------- full screen ----------------
   const fsBtn = document.getElementById("fsBtn");
@@ -1465,6 +1670,7 @@ select option { background: #0a2223; color: var(--ink); }
 
   function refreshControls() {
     count.value = prefs.count; countOut.textContent = prefs.count;
+    volume.value = prefs.volume; volumeOut.textContent = prefs.volume;
     speed.value = prefs.speed; speedOut.textContent = prefs.speed;
     colors.value = String(prefs.colors);
     [...waterGroup.children].forEach((b, i) => b.setAttribute("aria-pressed", String(i === prefs.water)));
@@ -1491,6 +1697,7 @@ select option { background: #0a2223; color: var(--ink); }
 
   let dragging = false;
   canvas.addEventListener("pointerdown", (e) => {
+    if (prefs.sound && !soundOn()) setSound(1);
     keepAwake.used = true;
     keepAwake();
     dismissHint();
@@ -1502,17 +1709,19 @@ select option { background: #0a2223; color: var(--ink); }
     if (tapVisitor(x, y)) return;
     // a splash near the frog sends it back into the water
     if (!food && frog.state === 3 && Math.hypot(x - frog.x, y - frog.y) < 22) frogHopOff();
-    if (food) dropFood(x, y);
+    if (food) { dropFood(x, y); sfx.plip(); }
     else {
+      sfx.splash();
       addRipple(x, y, 1, 1.8, 170);
       addRipple(x, y, -3, 2.0, 110);
       startle(x, y, 45);
     }
   });
   canvas.addEventListener("pointermove", (e) => {
+    const x = e.clientX / scale, y = e.clientY / scale;
+    if (e.pointerType === "mouse") onCursorMove(x, y);
     if (e.pointerType === "mouse" && !dragging) { wake(); return; }
     if (!dragging) return;
-    const x = e.clientX / scale, y = e.clientY / scale;
     // dragging a finger through the water leaves a ripple trail
     if (Math.hypot(x - lastRippleX, y - lastRippleY) > 6) {
       lastRippleX = x; lastRippleY = y;
@@ -1523,8 +1732,10 @@ select option { background: #0a2223; color: var(--ink); }
   const endDrag = () => { dragging = false; };
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("pointerleave", () => { cursor.on = false; cursor.still = 0; });
 
   window.addEventListener("keydown", (e) => {
+    if (prefs.sound && !soundOn() && e.key !== "m" && e.key !== "M") setSound(1);
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) {
       if (e.key === "Escape") { openPanel(false); settingsBtn.focus(); }
       return;
@@ -1534,6 +1745,10 @@ select option { background: #0a2223; color: var(--ink); }
       toggleFood();
     } else if (e.key === "Enter" && e.target === document.body && canFullscreen) {
       toggleFullscreen();
+    } else if (e.key === "m" || e.key === "M") {
+      setSound(!prefs.sound);
+      say(prefs.sound ? "sound on" : "sound off");
+      wake();
     } else if (e.key === "s" || e.key === "S") {
       openPanel(panel.hidden);
     } else if (e.key === "Escape" && !panel.hidden) {
